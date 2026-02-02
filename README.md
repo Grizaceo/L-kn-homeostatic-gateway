@@ -195,7 +195,8 @@ bash tests/smoke_test.sh
 ### Running unit tests
 
 ```bash
-pip install -r requirements-dev.txt && pytest -q
+pip install -r requirements.txt -r requirements-dev.txt
+pytest -q
 ```
 
 Tests validate:

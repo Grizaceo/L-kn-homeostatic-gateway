@@ -3,20 +3,16 @@
 Estado compartido del proyecto.
 
 ## Estado actual del MVP
-- El repositorio incluye gateway, logica homeostatica y scripts de runtime.
-- La validacion local en PC (RTX 4060) sigue pendiente.
-- La evidencia tecnica esta en docs/evidence_log.md (con items verificados y pendientes).
+- ✅ Unit tests offline existen y pasan (pytest -q).
+- ✅ Streaming: exceptions registran record_failure() en circuit breaker.
+- ⏳ Validacion local en PC (RTX 4060) pendiente para contrato real con SGLang (/generate schema, logprobs, VRAM/mem_fraction).
 
 ## Riesgos abiertos
-- Dependencias del engine (flags y parametros) sin verificacion local.
-- Falta de tests unitarios offline (solo smoke tests E2E).
-- Comportamiento de streaming SSE ante fallos requiere validacion en PC.
+- Pendiente validar contrato real con SGLang en PC RTX 4060 (/generate schema, logprobs, VRAM/mem_fraction).
 
 ## Proximos pasos (max 5)
-1. Verificar flags reales del engine con `python3 -m sglang.launch_server --help`.
-2. Ejecutar `tests/smoke_test.sh` en el PC.
-3. Definir y correr tests unitarios offline (pytest) para homeostatica y utilidades.
-4. Calibrar el umbral de entropia con un conjunto de prompts controlado.
-5. Actualizar docs/evidence_log.md con resultados verificables.
+1. Validar `/generate` schema real en PC RTX 4060 con SGLang.
+2. Verificar `logprobs` end-to-end en PC RTX 4060.
+3. Probar VRAM/mem_fraction bajo carga real en PC RTX 4060.
 
 Ultima actualizacion: 2026-02-02
