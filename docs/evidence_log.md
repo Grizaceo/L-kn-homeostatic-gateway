@@ -135,6 +135,24 @@ We explicitly **do NOT use** these because they don't exist or aren't needed:
    - Logprobs bug: sgl-project/sglang#1234
    - Memory tuning: sgl-project/sglang#5678
 
+### 2026-02-02 - Audit Findings
+
+#### Import Bug in utils.py
+**Status**: (A) Verified bug
+**Issue**: `orjson` used but not imported in `utils.py`.
+**Resolution**: Add import statement (Actionable for Gateway Core role).
+
+#### Circuit Breaker Gap in Streaming
+**Status**: (A) Verified logic error
+**Issue**: Circuit breaker state is not recorded (success/failure) for streaming requests in `engine_client.py`.
+**Resolution**: Wrap stream generator to track completion status (Actionable for Gateway Core role).
+
+#### Entropy Threshold Calibration
+**Status**: (B) Hypothesis
+**Current Value**: 0.6 (arbitrary midpoint).
+**Observation**: No empirical data links this specific value to response quality.
+**Experiment Needed**: Correlate `entropy_norm` with response quality on 100+ samples to determine optimal threshold.
+
 ### Future Improvements
 
 1. **Adaptive threshold**: Learn optimal entropy threshold from user feedback

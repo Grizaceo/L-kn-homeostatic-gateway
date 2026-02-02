@@ -3,6 +3,7 @@
 # Orchestrates the complete stack: Engine → Gateway → UI
 
 set -e
+set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -12,7 +13,13 @@ cd "$PROJECT_ROOT"
 # Load environment if exists
 if [ -f "config/.env" ]; then
     echo "Loading configuration from config/.env"
-    export $(grep -v '^#' config/.env | xargs)
+    set -a
+    source config/.env
+    set +a
+else
+    echo "WARNING: config/.env not found."
+    echo "  → Using default values."
+    echo "  → Tip: Run 'cp config/.env.example config/.env' to configure environment."
 fi
 
 echo "==================================="

@@ -147,11 +147,20 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
     tracker = LatencyTracker()
     tracker.start()
     
-    request_id = getattr(raw_request.scope, "request_id", "unknown")
+    request_id = raw_request.scope.get("request_id", "unknown")
     
     try:
         # Convert Pydantic messages to dicts
         messages = [msg.model_dump() for msg in request.messages]
+        
+        # Validate non-empty messages
+        if not messages:
+            return error_response(
+                400,
+                "invalid_request",
+                "Messages list cannot be empty",
+                {}
+            )
         
         # Homeostatic decision
         decision = None
@@ -173,8 +182,18 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
         
         # Call engine
         if request.stream:
+            # Check circuit breaker before streaming
+            if not engine_client.circuit_breaker.can_attempt():
+                return error_response(
+                    503,
+                    "service_unavailable",
+                    "Engine is temporarily unavailable (circuit breaker open)",
+                    {"retry_after": settings.circuit_breaker_timeout}
+                )
+            
             # Streaming response
             async def generate_stream():
+                stream_successful = False
                 try:
                     stream_gen = await engine_client.chat_completions(
                         messages=messages,
@@ -184,9 +203,14 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
                     
                     async for chunk in stream_gen:
                         yield chunk
+                        stream_successful = True
+                    
+                    # Mark as successful after complete stream
+                    if stream_successful and engine_client:
+                        engine_client.circuit_breaker.record_success()
                 
                 except Exception as e:
-                    logger.error("stream_error", error=str(e))
+                    logger.error("stream_error", error=str(e), error_type=type(e).__name__)
                     error_data = {
                         "error": {
                             "type": "stream_error",
@@ -194,6 +218,7 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
                         }
                     }
                     yield f"data: {orjson.dumps(error_data).decode()}\n\n"
+                    yield "data: [DONE]\n\n"
             
             # Log before streaming starts
             mode = decision.mode if decision else "passthrough"

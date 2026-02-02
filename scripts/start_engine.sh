@@ -3,6 +3,7 @@
 # Launches SGLang server with verified flags for RTX 4060 (8GB VRAM)
 
 set -e
+set -o pipefail
 
 # Configuration
 ENGINE_HOST="${ENGINE_HOST:-127.0.0.1}"
@@ -50,10 +51,14 @@ SGLANG_VERSION=$(python3 -c "import sglang; print(sglang.__version__)" 2>/dev/nu
 echo "OK (version: $SGLANG_VERSION)"
 
 # 4. Check if port is already in use
-if lsof -Pi :$ENGINE_PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
-    echo "ERROR: Port $ENGINE_PORT is already in use"
-    echo "Stop the existing process or change ENGINE_PORT"
-    exit 1
+if command -v lsof &>/dev/null; then
+    if lsof -Pi :$ENGINE_PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
+        echo "ERROR: Port $ENGINE_PORT is already in use"
+        echo "Stop the existing process or change ENGINE_PORT"
+        exit 1
+    fi
+else
+    echo "WARNING: 'lsof' not found. Skipping port check."
 fi
 
 # 5. Create log directory

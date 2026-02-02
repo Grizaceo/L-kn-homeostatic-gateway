@@ -5,15 +5,17 @@ services:
     image: ghcr.io/open-webui/open-webui:main
     container_name: lkn-open-webui
     ports:
-      - "127.0.0.1:3000:8080"
+      - "127.0.0.1:3000:8080" # Bind to localhost only for security
     environment:
+      # Use host.docker.internal to access host services (Engine/Gateway) from container
+      # Required for Windows/WSL2 and Mac. Linux users may need extra config.
       - OPENAI_API_BASE_URL=http://host.docker.internal:8000/v1
       - OPENAI_API_KEY=dummy-key
       - WEBUI_AUTH=false
     volumes:
       - open-webui-data:/app/backend/data
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "host.docker.internal:host-gateway" # Helper for Linux/WSL2
     restart: unless-stopped
 
 volumes:

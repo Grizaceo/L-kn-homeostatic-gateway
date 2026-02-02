@@ -84,6 +84,10 @@ class HomeostaticSystem:
         Returns:
             Normalized entropy or None if probe fails
         """
+        if not messages:
+            logger.warning("probe_empty_messages")
+            return None
+        
         try:
             # Convert messages to single prompt (simple concatenation)
             prompt_parts = []
@@ -110,8 +114,9 @@ class HomeostaticSystem:
             response = await self.engine_client.generate(prompt, sampling_params)
             
             # Extract logprobs from response
-            # SGLang format: response["meta_info"]["return_logprob"] or similar
-            # Adapt based on actual response structure
+            # Expected SGLang format: response["meta_info"]["output_top_logprobs"]
+            # This is a list of dicts, one per generated token
+            # Each dict maps token strings to their logprob values
             if "meta_info" in response and "output_top_logprobs" in response["meta_info"]:
                 top_logprobs = response["meta_info"]["output_top_logprobs"]
                 if top_logprobs and len(top_logprobs) > 0:
@@ -128,7 +133,7 @@ class HomeostaticSystem:
             return None
         
         except Exception as e:
-            logger.error("probe_failed", error=str(e))
+            logger.error("probe_failed", error=str(e), error_type=type(e).__name__)
             return None
     
     async def decide_mode(
@@ -149,7 +154,7 @@ class HomeostaticSystem:
         
         # Fallback to FLUIDO if probe fails
         if entropy_norm is None:
-            logger.info("lkn_mode_decision", mode=HomeostaticMode.FLUIDO, reason="probe_failed")
+            logger.warning("lkn_mode_decision", mode=HomeostaticMode.FLUIDO, reason="probe_failed")
             return HomeostaticDecision(
                 mode=HomeostaticMode.FLUIDO,
                 entropy_norm=None,
@@ -195,7 +200,7 @@ class HomeostaticSystem:
         Returns:
             Modified messages
         """
-        if decision.mode != HomeostaticMode.ANALITICO:
+        if decision.mode != HomeostaticMode.ANALITICO or not messages:
             return messages
         
         # Check if system message already exists

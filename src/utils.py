@@ -5,6 +5,7 @@ Shared utilities for logging, request tracking, and error handling.
 
 import uuid
 import time
+import orjson
 import structlog
 from typing import Dict, Any, Optional
 from fastapi import Request
