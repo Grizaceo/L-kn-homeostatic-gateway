@@ -1,5 +1,7 @@
-# Start of logic
+#!/bin/bash
+# L-kn Gateway Homeostático - Full System Startup
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+enable_strict_mode
 load_env
 
 echo "==================================="
@@ -9,73 +11,64 @@ echo "==================================="
 echo
 
 # 1. Environment validation
-echo "=== Step 1: Environment Validation ==="
+log_info "=== Step 1: Environment Validation ==="
 
-# Check curl
-if ! check_cmd curl; then
-    exit 1
+check_cmd curl
+check_cmd python3
+check_cmd docker
+
+# GPU Check (Optional for script flow, but strictly checked in start_engine)
+if command -v nvidia-smi &>/dev/null; then
+    echo "✓ GPU driver detected"
+else
+    log_warn "No NVIDIA driver detected. Engine start might fail if not CPU-only."
 fi
-echo "✓ curl available"
 
-# Check GPU
-if ! check_cmd nvidia-smi; then
-    echo "  (Non-GPU environment detected or driver missing)"
-    # Don't exit here if we want to allow testing on CPU-only notebooks
-    # but the user specified they have an RTX 4060, so normally we'd fail.
-    # Logic in start_engine will handle specific engine failures.
-fi
-echo "✓ GPU driver check complete"
-
-# Check Python
-if ! check_cmd python3; then
-    exit 1
-fi
-echo "✓ Python available"
-
-# Check Docker
-if ! check_cmd docker; then
-    exit 1
-fi
-echo "✓ Docker available"
-
- # Check if requirements are installed
+# Check Python requirements
+# We do a quick check for a key package
 if ! python3 -c "import fastapi" 2>/dev/null; then
-    echo "WARNING: FastAPI not installed. Installing requirements..."
+    log_warn "FastAPI not installed. Installing requirements..."
     pip install -r requirements.txt
+    echo "✓ Python dependencies installed"
+else
+    echo "✓ Python dependencies available"
 fi
-echo "✓ Python dependencies available"
 
 echo
 
 # 2. Start Engine
-echo "=== Step 2: Starting SGLang Engine ==="
+log_info "=== Step 2: Starting SGLang Engine ==="
+# We allow start_engine.sh to handle its own logic. 
+# Because of 'set -e', if it fails, we exit immediately.
 bash "$SCRIPT_DIR/start_engine.sh"
-if [ $? -ne 0 ]; then
-    echo "ERROR: Failed to start engine"
-    exit 1
-fi
 echo "✓ Engine started"
 echo
 
 # 3. Start Gateway
-echo "=== Step 3: Starting L-kn Gateway ==="
+log_info "=== Step 3: Starting L-kn Gateway ==="
 
-# Kill existing gateway if running
-if [ -f "logs/gateway.pid" ]; then
-    OLD_PID=$(cat logs/gateway.pid)
-    if kill -0 $OLD_PID 2>/dev/null; then
-        echo "Stopping existing gateway..."
-        kill $OLD_PID
+# Check/Kill existing gateway
+if [ -f "$PID_FILE_GATEWAY" ]; then
+    OLD_PID=$(cat "$PID_FILE_GATEWAY")
+    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+        log_info "Stopping existing gateway (PID: $OLD_PID)..."
+        kill "$OLD_PID"
         sleep 2
+    else
+        # Stale PID file
+        rm -f "$PID_FILE_GATEWAY"
     fi
 fi
 
-# Run gateway from root to ensure relative config paths work or use absolute
-PYTHONPATH=. python3 src/l_kn_gateway.py > logs/gateway.log 2>&1 &
+# Run gateway
+# We use nohup or just background to keep it alive? Original used `&`.
+# We strictly log to file.
+log_info "Logs: $LOG_FILE_GATEWAY"
+PYTHONPATH=. python3 src/l_kn_gateway.py > "$LOG_FILE_GATEWAY" 2>&1 &
 GATEWAY_PID=$!
 
-echo $GATEWAY_PID > logs/gateway.pid
-echo "Gateway PID: $GATEWAY_PID"
+echo "$GATEWAY_PID" > "$PID_FILE_GATEWAY"
+log_info "Gateway PID: $GATEWAY_PID"
 
 # Wait for gateway to be ready
 echo -n "Waiting for gateway..."
@@ -88,10 +81,12 @@ while [ $WAIT_TIME -lt $MAX_WAIT ]; do
         break
     fi
     
-    if ! kill -0 $GATEWAY_PID 2>/dev/null; then
+    if ! kill -0 "$GATEWAY_PID" 2>/dev/null; then
         echo " FAILED!"
-        echo "Gateway process died. Check logs:"
-        tail -n 20 logs/gateway.log
+        log_error "Gateway process died. Check logs:"
+        tail -n 20 "$LOG_FILE_GATEWAY"
+        # Cleanup
+        rm -f "$PID_FILE_GATEWAY"
         exit 1
     fi
     
@@ -102,7 +97,10 @@ done
 
 if [ $WAIT_TIME -ge $MAX_WAIT ]; then
     echo " TIMEOUT!"
-    echo "Gateway did not start within ${MAX_WAIT}s"
+    log_error "Gateway did not start within ${MAX_WAIT}s"
+    # Kill if stuck
+    kill "$GATEWAY_PID" 2>/dev/null
+    rm -f "$PID_FILE_GATEWAY"
     exit 1
 fi
 
@@ -110,23 +108,23 @@ echo "✓ Gateway started"
 echo
 
 # 4. Start Open WebUI
-echo "=== Step 4: Starting Open WebUI ==="
+log_info "=== Step 4: Starting Open WebUI ==="
 docker compose up -d
 
-if [ $? -ne 0 ]; then
-    echo "ERROR: Failed to start Open WebUI"
-    exit 1
-fi
-
+# Docker exit code check happens via set -e? 
+# docker compose up -d usually returns 0 if containers started or are running.
 echo "✓ Open WebUI started"
 echo
 
 # 5. Run smoke test
-echo "=== Step 5: Running Smoke Test ==="
+log_info "=== Step 5: Running Smoke Test ==="
 sleep 3  # Give UI time to fully initialize
 
+# We temporarily simple disable strict mode for smoke test if we want to handle failure gracefully
+set +e
 bash tests/smoke_test.sh
 SMOKE_EXIT=$?
+set -e
 
 echo
 
@@ -141,8 +139,8 @@ echo "  • Gateway:    http://127.0.0.1:8000"
 echo "  • Open WebUI: http://localhost:3000"
 echo
 echo "Logs:"
-echo "  • Engine:  logs/engine.log"
-echo "  • Gateway: logs/gateway.log"
+echo "  • Engine:  $LOG_FILE_ENGINE"
+echo "  • Gateway: $LOG_FILE_GATEWAY"
 echo
 echo "Management:"
 echo "  • Health:  bash scripts/healthcheck.sh"
@@ -150,10 +148,10 @@ echo "  • Shutdown: bash scripts/stop_all.sh"
 echo
 
 if [ $SMOKE_EXIT -eq 0 ]; then
-    echo "✓ All smoke tests passed"
+    log_info "✓ All smoke tests passed"
     echo
     echo "🚀 System is ready! Open http://localhost:3000 in your browser"
 else
-    echo "⚠ Some smoke tests failed. Check logs for details."
+    log_error "⚠ Some smoke tests failed. Check logs for details."
     exit 1
 fi

@@ -20,6 +20,14 @@ Para que el agente actúe con autoridad, el prompt **DEBE** comenzar con la decl
 
 *Si no se declara un rol, el agente se mantendrá en modo observador (análisis sin cambios en archivos).*
 
+### Regla Práctica
+> **Nuevo rol o nueva tarea ⇒ Nuevo chat**
+>
+> Para mantener contexto limpio y evitar conflictos de ownership, se recomienda
+> iniciar un chat nuevo cuando:
+> - Cambias de rol (ej: de DevOps a Gateway Core)
+> - Inicias una tarea no relacionada con la anterior
+
 ### 3. Roles Disponibles
 - **Architect & Evidence Auditor**: Dueño de `/docs`. Vela por la coherencia y la trazabilidad.
 - **Gateway Core & Homeostatic Logic**: Dueño de `/src`. Implementa la lógica de proxy y streaming.
@@ -236,6 +244,20 @@ The gateway opens circuit breaker after 5 consecutive engine failures:
 bash scripts/stop_engine.sh
 bash scripts/start_engine.sh
 ```
+
+
+### Clean Shutdown / PID Lock
+
+The scripts use `logs/*.pid` to track processes. If the engine fails to start due to a "stale PID file":
+
+1. Try running stop script to clean up (it handles stale locks):
+   ```bash
+   bash scripts/stop_engine.sh
+   ```
+2. If that fails or loop persists, manually remove the lock:
+   ```bash
+   rm logs/engine.pid
+   ```
 
 ## Architecture Details
 
