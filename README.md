@@ -192,6 +192,12 @@ All settings are in [`config/.env`](config/.env.example):
 bash tests/smoke_test.sh
 ```
 
+### Running unit tests
+
+```bash
+pip install -r requirements-dev.txt && pytest -q
+```
+
 Tests validate:
 - ✓ Engine reachability
 - ✓ Gateway OpenAI API compatibility

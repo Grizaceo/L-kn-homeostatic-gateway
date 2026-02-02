@@ -16,7 +16,7 @@ from pydantic_settings import BaseSettings
 
 from engine_client import EngineClient
 from homeostatic import HomeostaticSystem, HomeostaticConfig
-from utils import RequestContextMiddleware, error_response, LatencyTracker, log_request
+from utils import RequestContextMiddleware, error_response, LatencyTracker, log_request, classify_engine_error
 
 logger = structlog.get_logger()
 
@@ -206,24 +206,45 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
                         stream_successful = True
                     
                     # Mark as successful after complete stream
-                    if stream_successful and engine_client:
-                        engine_client.circuit_breaker.record_success()
+                    # Note: engine_client handles circuit_breaker success internally
                 
                 except Exception as e:
-                    logger.error("stream_error", error=str(e), error_type=type(e).__name__)
+                    # Log failure with full context
+                    category, reason = classify_engine_error(e)
+                    # Ensure circuit breaker records streaming failures
+                    if engine_client and engine_client.circuit_breaker:
+                        engine_client.circuit_breaker.record_failure()
+                    logger.error(
+                        "streaming_exception",
+                        request_id=request_id,
+                        reason=reason,
+                        error=str(e),
+                        category=category
+                    )
+                    log_request(
+                        request_id=request_id,
+                        mode=decision.mode if decision else "passthrough",
+                        entropy_norm=decision.entropy_norm if decision else None,
+                        latency_ms=tracker.elapsed_ms(),
+                        status="failed",
+                        engine_status=category,  # real/simbólico
+                        failure_reason=reason
+                    )
+                    
                     error_data = {
                         "error": {
                             "type": "stream_error",
-                            "message": str(e)
+                            "message": str(e),
+                            "code": reason
                         }
                     }
                     yield f"data: {orjson.dumps(error_data).decode()}\n\n"
                     yield "data: [DONE]\n\n"
             
-            # Log before streaming starts
+            # Log before streaming starts (initial acknowledgement)
             mode = decision.mode if decision else "passthrough"
             entropy_norm = decision.entropy_norm if decision else None
-            log_request(request_id, mode, entropy_norm, tracker.elapsed_ms(), "streaming")
+            log_request(request_id, mode, entropy_norm, tracker.elapsed_ms(), "streaming_started")
             
             return StreamingResponse(
                 generate_stream(),
@@ -247,6 +268,15 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
     
     except RuntimeError as e:
         if "Circuit breaker" in str(e):
+            log_request(
+                request_id=request_id,
+                mode="unknown",
+                entropy_norm=None,
+                latency_ms=tracker.elapsed_ms(),
+                status="failed",
+                engine_status="real",
+                failure_reason="circuit_breaker_open"
+            )
             return error_response(
                 503,
                 "service_unavailable",
@@ -256,12 +286,29 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
         raise
     
     except Exception as e:
-        logger.error("request_failed", error=str(e), error_type=type(e).__name__)
+        category, reason = classify_engine_error(e)
+        
+        # Log failure
+        mode = "unknown"
+        entropy_norm = None
+        # Try to recover mode from local vars if exception happened late
+        # But for robustness, keep it simple or use defaults
+        
+        log_request(
+            request_id=request_id,
+            mode=mode,
+            entropy_norm=entropy_norm,
+            latency_ms=tracker.elapsed_ms(),
+            status="failed",
+            engine_status=category,
+            failure_reason=reason
+        )
+        
         return error_response(
             500,
             "internal_error",
             "Request processing failed",
-            {"error": str(e)}
+            {"error": str(e), "code": reason}
         )
 
 

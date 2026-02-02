@@ -181,15 +181,25 @@ class EngineClient:
             if stream:
                 # Return async generator for streaming
                 async def stream_generator():
-                    async with self.client.stream(
-                        "POST",
-                        f"{self.base_url}/v1/chat/completions",
-                        json=payload
-                    ) as response:
-                        response.raise_for_status()
-                        async for chunk in response.aiter_text():
-                            yield chunk
-                
+                    try:
+                        async with self.client.stream(
+                            "POST",
+                            f"{self.base_url}/v1/chat/completions",
+                            json=payload
+                        ) as response:
+                            response.raise_for_status()
+                            async for chunk in response.aiter_text():
+                                yield chunk
+                        
+                        # Only record success if stream completes without error
+                        self.circuit_breaker.record_success()
+                        
+                    except Exception as e:
+                        # Record failure on any streaming exception (timeout, disconnect, etc)
+                        self.circuit_breaker.record_failure()
+                        logger.error("stream_failed_mid_flight", error=str(e))
+                        raise
+
                 return stream_generator()
             
             else:
@@ -198,6 +208,7 @@ class EngineClient:
                 return response.json()
         
         except Exception as e:
+            # Catch errors during setup or non-streaming request
             self.circuit_breaker.record_failure()
             logger.error("chat_completions_failed", error=str(e))
             raise

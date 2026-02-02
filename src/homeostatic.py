@@ -114,9 +114,6 @@ class HomeostaticSystem:
             response = await self.engine_client.generate(prompt, sampling_params)
             
             # Extract logprobs from response
-            # Expected SGLang format: response["meta_info"]["output_top_logprobs"]
-            # This is a list of dicts, one per generated token
-            # Each dict maps token strings to their logprob values
             if "meta_info" in response and "output_top_logprobs" in response["meta_info"]:
                 top_logprobs = response["meta_info"]["output_top_logprobs"]
                 if top_logprobs and len(top_logprobs) > 0:
@@ -129,11 +126,14 @@ class HomeostaticSystem:
                     logger.info("probe_completed", entropy_norm=round(entropy_norm, 3))
                     return entropy_norm
             
-            logger.warning("probe_no_logprobs", response_keys=list(response.keys()))
+            logger.warning("probe_schema_mismatch", response_keys=list(response.keys()))
             return None
         
         except Exception as e:
-            logger.error("probe_failed", error=str(e), error_type=type(e).__name__)
+            # Import here to avoid top-level circular imports if any
+            from utils import classify_engine_error
+            category, reason = classify_engine_error(e)
+            logger.error("probe_failed", failure_reason=reason, category=category, error=str(e))
             return None
     
     async def decide_mode(
@@ -154,12 +154,13 @@ class HomeostaticSystem:
         
         # Fallback to FLUIDO if probe fails
         if entropy_norm is None:
-            logger.warning("lkn_mode_decision", mode=HomeostaticMode.FLUIDO, reason="probe_failed")
+            # Note: The specific failure reason was already logged in probe_entropy
+            logger.warning("lkn_mode_decision_fallback", mode=HomeostaticMode.FLUIDO, reason="probe_failed_or_engine_down")
             return HomeostaticDecision(
                 mode=HomeostaticMode.FLUIDO,
                 entropy_norm=None,
                 intervention_applied=False,
-                rationale="Probe failed, defaulting to FLUIDO mode"
+                rationale="Probe failed (engine down or schema mismatch), defaulting to FLUIDO"
             )
         
         # Decision logic
