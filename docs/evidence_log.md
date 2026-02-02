@@ -4,6 +4,11 @@ Research findings from SGLang documentation and testing.
 
 ## Date: 2026-02-02
 
+### Antigravity Operating Model Audit
+- **Status**: Updated `README.md` with explicit role-based instructions.
+- **Decision**: Formalized the requirement for role declaration at prompt start to trigger write permissions.
+- **Rationale**: Ensure compliance with `all-agents-principle.md` and maintain clear ownership across `/src`, `/scripts`, and `/docs`.
+
 ### SGLang Capabilities Research
 
 #### Launch Command

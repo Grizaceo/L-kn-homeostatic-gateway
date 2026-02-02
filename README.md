@@ -2,6 +2,37 @@
 
 **Homeostatic Inference Gateway** for local LLM deployment on RTX 4060 (8GB VRAM).
 
+## 🛸 Antigravity Operating Model
+Este proyecto utiliza el marco **Antigravity** para su desarrollo, bajo un modelo de **Roles Explícitos**.
+
+### 1. ¿Qué es Antigravity?
+Es el sistema operativo de agentes que rige este workspace.
+- **Workspace Rules**: Reglas de oro (archivos `.md`) que dictan cómo se escribe código, se gestiona la seguridad y se documenta la evidencia.
+- **"Always On"**: Estas reglas están siempre activas para garantizar rigor epistemológico y seguridad local (bind 127.0.0.1).
+- **Asignación de Roles**: Para evitar ambigüedad, el agente solo activa sus capacidades de escritura si se le asigna un rol en el prompt.
+
+### 2. Cómo iniciar una tarea correctamente
+Para que el agente actúe con autoridad, el prompt **DEBE** comenzar con la declaración del rol.
+
+**Ejemplo de Prompt:**
+> "Rol: Gateway Core & Homeostatic Logic"
+> Tarea: Ajustar el umbral de entropía en el sensor homeostático.
+
+*Si no se declara un rol, el agente se mantendrá en modo observador (análisis sin cambios en archivos).*
+
+### 3. Roles Disponibles
+- **Architect & Evidence Auditor**: Dueño de `/docs`. Vela por la coherencia y la trazabilidad.
+- **Gateway Core & Homeostatic Logic**: Dueño de `/src`. Implementa la lógica de proxy y streaming.
+- **DevOps & Runtime Orchestration**: Dueño de `/scripts` y `docker-compose.yml`. Garantiza la reproducibilidad.
+
+### 4. Flujo de Trabajo
+1. **Declarar Rol** al inicio del prompt.
+2. **Ejecutar Tarea** (Implementación / Debug).
+3. **Actualizar Evidencia** en `docs/evidence_log.md` (si hay decisiones técnicas).
+4. **Verificar** con `bash tests/smoke_test.sh`.
+
+---
+
 ## Architecture
 
 L-kn implements a **Gateway Pattern** for adaptive inference:
