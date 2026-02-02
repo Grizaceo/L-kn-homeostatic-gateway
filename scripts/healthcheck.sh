@@ -1,5 +1,6 @@
-#!/bin/bash
-# L-kn System Health Check Script
+# Start of logic
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+load_env
 
 ENGINE_HOST="${ENGINE_HOST:-127.0.0.1}"
 ENGINE_PORT="${ENGINE_PORT:-30000}"

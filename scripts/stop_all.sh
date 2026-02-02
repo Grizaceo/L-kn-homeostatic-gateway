@@ -1,7 +1,5 @@
-#!/bin/bash
-# L-kn System Shutdown Script
-
-set -e
+# Start of logic
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 echo "=== L-kn System Shutdown ==="
 
@@ -28,7 +26,7 @@ fi
 
 # 3. Stop Engine
 echo "Stopping engine..."
-bash scripts/stop_engine.sh
+bash "$SCRIPT_DIR/stop_engine.sh"
 echo "✓ Engine stopped"
 
 echo

@@ -1,11 +1,8 @@
-#!/bin/bash
-# L-kn Engine Startup Script
-# Launches SGLang server with verified flags for RTX 4060 (8GB VRAM)
+# Start of logic
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+load_env
 
-set -e
-set -o pipefail
-
-# Configuration
+# Defaults (can be overridden by .env loaded above)
 ENGINE_HOST="${ENGINE_HOST:-127.0.0.1}"
 ENGINE_PORT="${ENGINE_PORT:-30000}"
 ENGINE_MODEL="${ENGINE_MODEL:-Qwen/Qwen2.5-3B-Instruct-AWQ}"

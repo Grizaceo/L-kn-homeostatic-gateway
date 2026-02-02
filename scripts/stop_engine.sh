@@ -1,9 +1,5 @@
-#!/bin/bash
-# L-kn Engine Shutdown Script
-
-set -e
-
-PID_FILE="logs/engine.pid"
+# Start of logic
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 echo "=== L-kn Engine Shutdown ==="
 
