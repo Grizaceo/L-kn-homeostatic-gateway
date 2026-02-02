@@ -91,7 +91,11 @@ python3 -c "import sglang; print(sglang.__version__)"
 
 ### 2. Install Python Dependencies
 
+It is highly recommended to use a virtual environment:
+
 ```bash
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
@@ -99,7 +103,7 @@ pip install -r requirements.txt
 
 ```bash
 cp config/.env.example config/.env
-# Edit config/.env if needed (optional)
+# Edit config/.env to customize ports or model
 ```
 
 ### 4. Make Scripts Executable
@@ -114,27 +118,30 @@ chmod +x tests/*.sh
 ### Quick Start
 
 ```bash
-# Start the entire stack
+# Start the entire stack from the project root
 bash scripts/start_all.sh
 ```
 
 This will:
-1. Validate GPU and environment
-2. Start SGLang engine (downloads model on first run)
-3. Start L-kn gateway
-4. Start Open WebUI
-5. Run smoke tests
+1. Validate GPU, Docker, and utilities (like curl)
+2. Load configuration from `config/.env`
+3. Start SGLang engine (downloads model on first run)
+4. Start L-kn gateway (using PYTHONPATH for reliability)
+5. Start Open WebUI via Docker Compose
+6. Run smoke tests
 
 **Access**: Open http://localhost:3000 in your browser
 
 ### Individual Components
+
+All components should be started from the **root directory**:
 
 ```bash
 # Start only engine
 bash scripts/start_engine.sh
 
 # Start only gateway (requires engine running)
-cd src && python3 l_kn_gateway.py
+PYTHONPATH=. python3 src/l_kn_gateway.py
 
 # Start only UI (requires gateway running)
 docker compose up -d

@@ -82,3 +82,6 @@ El agente debe:
   - Real (OOM, timeout)
   - Simbólico (schema, streaming)
   - Imaginario (UX)
+
+Si una tarea asignada en un prompt se considera completada,
+se recomienda cerrar el chat e iniciar uno nuevo para la siguiente tarea o rol.
