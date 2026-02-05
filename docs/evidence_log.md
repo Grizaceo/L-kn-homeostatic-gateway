@@ -21,3 +21,28 @@ Regla: todo claim sin evidencia externa se marca como SIN FUENTE y se acompana d
 ## C) Decisiones pendientes de validacion (SIN FUENTE)
 - Umbral de entropia 0.6: requiere experimento controlado.
   Como verificar en el PC: correr un set de prompts y correlacionar `entropy_norm` con calidad.
+
+---
+
+Fecha: 2026-02-05
+Alcance: Inicio aplicacion MVP plan (rules-first + telemetria JSONL)
+
+## D) Cambios implementados en codigo
+1) `src/homeostatic.py` ahora soporta `decision_strategy`:
+   - `rules` (default): usa señales baratas del request.
+   - `entropy`: mantiene probe de logprobs.
+2) En modo `entropy`, si falla el probe, el sistema hace fallback a reglas deterministas.
+3) `src/l_kn_gateway.py` registra telemetria por request en JSONL.
+4) Se agrego `src/telemetry.py` para persistir eventos estructurados.
+5) Se actualizo `config/.env.example` con:
+   - `LKN_DECISION_STRATEGY`
+   - `LKN_MAX_TOKENS_FLUIDO`
+
+## E) Como verificar en el PC
+1) Levantar stack y enviar requests simples y tecnicos.
+2) Revisar `logs/telemetry_YYYY-MM-DD.jsonl` para confirmar:
+   - `mode`
+   - `decision_strategy`
+   - `probe` (en strategy `rules` o fallback)
+   - `latency_ms`, `status`, `tokens_generated`
+3) Forzar `LKN_DECISION_STRATEGY=entropy` y apagar engine para validar fallback a reglas.

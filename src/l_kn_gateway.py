@@ -3,7 +3,6 @@ L-kn Gateway - FastAPI Application
 OpenAI-compatible gateway with homeostatic decision-making.
 """
 
-import os
 from typing import List, Dict, Any, Optional
 from contextlib import asynccontextmanager
 import orjson
@@ -15,7 +14,8 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
 from engine_client import EngineClient
-from homeostatic import HomeostaticSystem, HomeostaticConfig
+from homeostatic import HomeostaticSystem, HomeostaticConfig, HomeostaticDecision
+from telemetry import TelemetryLogger
 from utils import RequestContextMiddleware, error_response, LatencyTracker, log_request, classify_engine_error
 
 logger = structlog.get_logger()
@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     
     lkn_entropy_threshold: float = 0.6
     lkn_probe_top_k: int = 10
+    lkn_decision_strategy: str = "rules"  # "rules" or "entropy"
+    lkn_max_tokens_fluido: int = 150
     lkn_analytic_system_prompt: str = "Think carefully, verify your assumptions, and reason step-by-step before answering."
     lkn_mode: str = "homeostatic"  # "homeostatic" or "passthrough"
     
@@ -64,12 +66,13 @@ class ChatCompletionRequest(BaseModel):
 settings = Settings()
 engine_client: Optional[EngineClient] = None
 homeostatic_system: Optional[HomeostaticSystem] = None
+telemetry_logger: Optional[TelemetryLogger] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown logic."""
-    global engine_client, homeostatic_system
+    global engine_client, homeostatic_system, telemetry_logger
     
     # Startup
     logger.info("gateway_startup", version="0.1.0")
@@ -85,13 +88,21 @@ async def lifespan(app: FastAPI):
     
     # Initialize homeostatic system
     homeostatic_config = HomeostaticConfig(
+        decision_strategy=settings.lkn_decision_strategy,
         entropy_threshold=settings.lkn_entropy_threshold,
         probe_top_k=settings.lkn_probe_top_k,
+        max_tokens_fluido=settings.lkn_max_tokens_fluido,
         analytic_system_prompt=settings.lkn_analytic_system_prompt
     )
     homeostatic_system = HomeostaticSystem(homeostatic_config, engine_client)
-    
-    logger.info("gateway_ready", mode=settings.lkn_mode)
+
+    telemetry_logger = TelemetryLogger(log_dir="logs")
+
+    logger.info(
+        "gateway_ready",
+        mode=settings.lkn_mode,
+        decision_strategy=settings.lkn_decision_strategy,
+    )
     
     yield
     
@@ -127,6 +138,67 @@ app.add_middleware(
 app.add_middleware(RequestContextMiddleware)
 
 
+def _extract_completion_tokens(payload: Dict[str, Any]) -> int:
+    """Extract completion token count from non-streaming payload."""
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return 0
+    value = usage.get("completion_tokens", usage.get("output_tokens", 0))
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _count_stream_data_events(chunk: str) -> int:
+    """Count non-DONE `data:` lines in streamed chunks."""
+    return sum(
+        1
+        for line in chunk.splitlines()
+        if line.startswith("data: ") and line.strip() != "data: [DONE]"
+    )
+
+
+def _emit_telemetry(
+    request_id: str,
+    mode: str,
+    decision: Optional[HomeostaticDecision],
+    tracker: LatencyTracker,
+    status: str,
+    stream: bool,
+    tokens_generated: int = 0,
+    engine_status: Optional[str] = None,
+    failure_reason: Optional[str] = None,
+) -> None:
+    """Emit one structured telemetry record to JSONL."""
+    if telemetry_logger is None:
+        return
+
+    payload: Dict[str, Any] = {
+        "request_id": request_id,
+        "mode": mode,
+        "stream": stream,
+        "status": status,
+        "latency_ms": round(tracker.elapsed_ms(), 2),
+        "tokens_generated": tokens_generated,
+        "entropy_norm": decision.entropy_norm if decision else None,
+    }
+
+    if decision:
+        payload["decision_strategy"] = decision.decision_strategy
+        payload["rationale"] = decision.rationale
+        payload["intervention_applied"] = decision.intervention_applied
+        if decision.probe_signals:
+            payload["probe"] = decision.probe_signals.model_dump()
+
+    if engine_status:
+        payload["engine_status"] = engine_status
+    if failure_reason:
+        payload["failure_reason"] = failure_reason
+
+    telemetry_logger.log_event(payload)
+
+
 @app.get("/health")
 async def health():
     """Health check endpoint."""
@@ -135,7 +207,8 @@ async def health():
     return {
         "status": "healthy" if engine_healthy else "degraded",
         "engine": "connected" if engine_healthy else "disconnected",
-        "mode": settings.lkn_mode
+        "mode": settings.lkn_mode,
+        "decision_strategy": settings.lkn_decision_strategy,
     }
 
 
@@ -146,31 +219,45 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
     """
     tracker = LatencyTracker()
     tracker.start()
-    
+
     request_id = raw_request.scope.get("request_id", "unknown")
-    
+    decision: Optional[HomeostaticDecision] = None
+    mode = "passthrough"
+    entropy_norm: Optional[float] = None
+
     try:
         # Convert Pydantic messages to dicts
         messages = [msg.model_dump() for msg in request.messages]
-        
+
         # Validate non-empty messages
         if not messages:
+            _emit_telemetry(
+                request_id=request_id,
+                mode=mode,
+                decision=decision,
+                tracker=tracker,
+                status="failed",
+                stream=request.stream,
+                engine_status="simbolico",
+                failure_reason="empty_messages",
+            )
             return error_response(
                 400,
                 "invalid_request",
                 "Messages list cannot be empty",
                 {}
             )
-        
+
         # Homeostatic decision
-        decision = None
         if settings.lkn_mode == "homeostatic":
             decision = await homeostatic_system.decide_mode(messages)
-            
+            mode = decision.mode
+            entropy_norm = decision.entropy_norm
+
             # Apply intervention if needed
             if decision.intervention_applied:
                 messages = homeostatic_system.apply_intervention(messages, decision)
-        
+
         # Prepare kwargs for engine
         engine_kwargs = {}
         if request.temperature is not None:
@@ -179,41 +266,61 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
             engine_kwargs["top_p"] = request.top_p
         if request.max_tokens is not None:
             engine_kwargs["max_tokens"] = request.max_tokens
-        
+
         # Call engine
         if request.stream:
             # Check circuit breaker before streaming
             if not engine_client.circuit_breaker.can_attempt():
+                _emit_telemetry(
+                    request_id=request_id,
+                    mode=mode,
+                    decision=decision,
+                    tracker=tracker,
+                    status="failed",
+                    stream=True,
+                    engine_status="real",
+                    failure_reason="circuit_breaker_open",
+                )
                 return error_response(
                     503,
                     "service_unavailable",
                     "Engine is temporarily unavailable (circuit breaker open)",
                     {"retry_after": settings.circuit_breaker_timeout}
                 )
-            
+
             # Streaming response
             async def generate_stream():
-                stream_successful = False
+                output_events = 0
                 try:
                     stream_gen = await engine_client.chat_completions(
                         messages=messages,
                         stream=True,
                         **engine_kwargs
                     )
-                    
+
                     async for chunk in stream_gen:
+                        output_events += _count_stream_data_events(chunk)
                         yield chunk
-                        stream_successful = True
-                    
-                    # Mark as successful after complete stream
-                    # Note: engine_client handles circuit_breaker success internally
-                
+
+                    log_request(
+                        request_id=request_id,
+                        mode=mode,
+                        entropy_norm=entropy_norm,
+                        latency_ms=tracker.elapsed_ms(),
+                    )
+                    _emit_telemetry(
+                        request_id=request_id,
+                        mode=mode,
+                        decision=decision,
+                        tracker=tracker,
+                        status="success",
+                        stream=True,
+                        tokens_generated=output_events,
+                    )
+
                 except Exception as e:
                     # Log failure with full context
                     category, reason = classify_engine_error(e)
-                    # Ensure circuit breaker records streaming failures
-                    if engine_client and engine_client.circuit_breaker:
-                        engine_client.circuit_breaker.record_failure()
                     logger.error(
                         "streaming_exception",
                         request_id=request_id,
@@ -223,14 +330,25 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
                     )
                     log_request(
                         request_id=request_id,
-                        mode=decision.mode if decision else "passthrough",
-                        entropy_norm=decision.entropy_norm if decision else None,
+                        mode=mode,
+                        entropy_norm=entropy_norm,
                         latency_ms=tracker.elapsed_ms(),
                         status="failed",
-                        engine_status=category,  # real/simbólico
+                        engine_status=category,
                         failure_reason=reason
                     )
-                    
+                    _emit_telemetry(
+                        request_id=request_id,
+                        mode=mode,
+                        decision=decision,
+                        tracker=tracker,
+                        status="failed",
+                        stream=True,
+                        tokens_generated=output_events,
+                        engine_status=category,
+                        failure_reason=reason,
+                    )
+
                     error_data = {
                         "error": {
                             "type": "stream_error",
@@ -240,17 +358,23 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
                     }
                     yield f"data: {orjson.dumps(error_data).decode()}\n\n"
                     yield "data: [DONE]\n\n"
-            
+
             # Log before streaming starts (initial acknowledgement)
-            mode = decision.mode if decision else "passthrough"
-            entropy_norm = decision.entropy_norm if decision else None
             log_request(request_id, mode, entropy_norm, tracker.elapsed_ms(), "streaming_started")
-            
+            _emit_telemetry(
+                request_id=request_id,
+                mode=mode,
+                decision=decision,
+                tracker=tracker,
+                status="streaming_started",
+                stream=True,
+            )
+
             return StreamingResponse(
                 generate_stream(),
                 media_type="text/event-stream"
             )
-        
+
         else:
             # Non-streaming response
             response = await engine_client.chat_completions(
@@ -258,24 +382,42 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
                 stream=False,
                 **engine_kwargs
             )
-            
+            completion_tokens = _extract_completion_tokens(response)
+
             # Log completion
-            mode = decision.mode if decision else "passthrough"
-            entropy_norm = decision.entropy_norm if decision else None
             log_request(request_id, mode, entropy_norm, tracker.elapsed_ms())
-            
+            _emit_telemetry(
+                request_id=request_id,
+                mode=mode,
+                decision=decision,
+                tracker=tracker,
+                status="success",
+                stream=False,
+                tokens_generated=completion_tokens,
+            )
+
             return JSONResponse(content=response)
-    
+
     except RuntimeError as e:
         if "Circuit breaker" in str(e):
             log_request(
                 request_id=request_id,
-                mode="unknown",
-                entropy_norm=None,
+                mode=mode,
+                entropy_norm=entropy_norm,
                 latency_ms=tracker.elapsed_ms(),
                 status="failed",
                 engine_status="real",
                 failure_reason="circuit_breaker_open"
+            )
+            _emit_telemetry(
+                request_id=request_id,
+                mode=mode,
+                decision=decision,
+                tracker=tracker,
+                status="failed",
+                stream=request.stream,
+                engine_status="real",
+                failure_reason="circuit_breaker_open",
             )
             return error_response(
                 503,
@@ -284,16 +426,10 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
                 {"retry_after": settings.circuit_breaker_timeout}
             )
         raise
-    
+
     except Exception as e:
         category, reason = classify_engine_error(e)
-        
-        # Log failure
-        mode = "unknown"
-        entropy_norm = None
-        # Try to recover mode from local vars if exception happened late
-        # But for robustness, keep it simple or use defaults
-        
+
         log_request(
             request_id=request_id,
             mode=mode,
@@ -303,7 +439,17 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
             engine_status=category,
             failure_reason=reason
         )
-        
+        _emit_telemetry(
+            request_id=request_id,
+            mode=mode,
+            decision=decision,
+            tracker=tracker,
+            status="failed",
+            stream=request.stream,
+            engine_status=category,
+            failure_reason=reason,
+        )
+
         return error_response(
             500,
             "internal_error",
@@ -319,6 +465,7 @@ async def root():
         "service": "L-kn Gateway",
         "version": "0.1.0",
         "mode": settings.lkn_mode,
+        "decision_strategy": settings.lkn_decision_strategy,
         "endpoints": {
             "health": "/health",
             "chat_completions": "/v1/chat/completions"

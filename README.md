@@ -67,11 +67,11 @@ L-kn implements a **Gateway Pattern** for adaptive inference:
 
 The gateway intercepts requests and makes adaptive decisions:
 
-1. **Probe**: Query engine with `max_tokens=1` + `top_logprobs_num=10`
-2. **Entropy Analysis**: Calculate normalized Shannon entropy: `H = -Σ p·log(p)`
+1. **Rules Probe (default)**: Cheap request-level signals (length, code/math patterns, multi-step cues)
+2. **Optional Entropy Probe**: Engine logprob probe (`max_new_tokens=1`, `top_logprobs_num=K`) when `LKN_DECISION_STRATEGY=entropy`
 3. **Mode Selection**:
-   - **FLUIDO** (H < 0.6): Low uncertainty → pass-through
-   - **ANALÍTICO** (H ≥ 0.6): High uncertainty → inject verification prompt
+   - **FLUIDO**: Low-risk request, pass-through
+   - **ANALITICO**: High-risk request, inject verification prompt
 
 ## Requirements
 
@@ -183,6 +183,8 @@ All settings are in [`config/.env`](config/.env.example):
 | `ENGINE_MEM_FRACTION` | `0.85` | GPU memory allocation (0.0-1.0) |
 | `LKN_ENTROPY_THRESHOLD` | `0.6` | Decision threshold for mode switch |
 | `LKN_PROBE_TOP_K` | `10` | Number of top logprobs for entropy |
+| `LKN_DECISION_STRATEGY` | `rules` | `rules` (default) or `entropy` |
+| `LKN_MAX_TOKENS_FLUIDO` | `150` | Long prompts above this value route to `ANALITICO` in rules mode |
 | `LKN_MODE` | `homeostatic` | `homeostatic` or `passthrough` |
 
 ## Testing

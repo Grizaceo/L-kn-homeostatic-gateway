@@ -21,6 +21,7 @@ class FakeEngineClient:
     async def chat_completions(self, _messages, stream=False, **_kwargs):
         async def gen():
             yield "data: test\n\n"
+            self.circuit_breaker.record_failure()
             raise RuntimeError("stream boom")
 
         return gen()

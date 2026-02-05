@@ -5,7 +5,7 @@ from homeostatic import HomeostaticConfig, HomeostaticMode, HomeostaticSystem
 
 @pytest.mark.asyncio
 async def test_decision_fluid_below_threshold(monkeypatch):
-    system = HomeostaticSystem(HomeostaticConfig(), engine_client=None)
+    system = HomeostaticSystem(HomeostaticConfig(decision_strategy="entropy"), engine_client=None)
 
     async def fake_probe(_messages):
         return system.config.entropy_threshold - 0.01
@@ -17,7 +17,7 @@ async def test_decision_fluid_below_threshold(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_decision_analitico_at_or_above_threshold(monkeypatch):
-    system = HomeostaticSystem(HomeostaticConfig(), engine_client=None)
+    system = HomeostaticSystem(HomeostaticConfig(decision_strategy="entropy"), engine_client=None)
 
     async def fake_probe(_messages):
         return system.config.entropy_threshold
@@ -29,7 +29,7 @@ async def test_decision_analitico_at_or_above_threshold(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_decision_fallback_to_fluid_when_probe_returns_none(monkeypatch):
-    system = HomeostaticSystem(HomeostaticConfig(), engine_client=None)
+    system = HomeostaticSystem(HomeostaticConfig(decision_strategy="entropy"), engine_client=None)
 
     async def fake_probe(_messages):
         return None
@@ -46,7 +46,7 @@ async def test_decision_fallback_when_probe_raises_in_generate():
         async def generate(self, _prompt, _sampling_params=None):
             raise RuntimeError("boom")
 
-    system = HomeostaticSystem(HomeostaticConfig(), engine_client=ExplodingEngineClient())
+    system = HomeostaticSystem(HomeostaticConfig(decision_strategy="entropy"), engine_client=ExplodingEngineClient())
     decision = await system.decide_mode([{"role": "user", "content": "hi"}])
     assert decision.mode == HomeostaticMode.FLUIDO
     assert decision.entropy_norm is None
