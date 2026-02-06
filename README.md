@@ -185,7 +185,7 @@ All settings are in [`config/.env`](config/.env.example):
 | `LKN_PROBE_TOP_K` | `10` | Number of top logprobs for entropy |
 | `LKN_DECISION_STRATEGY` | `rules` | `rules` (default) or `entropy` |
 | `LKN_MAX_TOKENS_FLUIDO` | `150` | Long prompts above this value route to `ANALITICO` in rules mode |
-| `LKN_MODE` | `homeostatic` | `homeostatic` or `passthrough` |
+| `LKN_MODE` | `homeostatic` | `homeostatic`, `passthrough`, or `always_analitico` |
 
 ## Testing
 

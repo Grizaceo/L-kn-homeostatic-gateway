@@ -1,6 +1,6 @@
 import pytest
 
-from homeostatic import HomeostaticConfig, HomeostaticMode, HomeostaticSystem
+from homeostatic import HomeostaticConfig, HomeostaticDecision, HomeostaticMode, HomeostaticSystem
 
 
 def _rules_system(max_tokens_fluido=150):
@@ -57,3 +57,21 @@ async def test_entropy_fallback_uses_rules(monkeypatch):
     decision = await system.decide_mode([{"role": "user", "content": prompt}])
     assert decision.mode == HomeostaticMode.ANALITICO
     assert decision.decision_strategy == "entropy_fallback_rules"
+
+
+def test_always_analitico_mode_injects_intervention_prompt():
+    """Verify baseline forced ANALITICO decision injects system intervention."""
+    system = _rules_system()
+    decision = HomeostaticDecision(
+        mode="ANALITICO",
+        entropy_norm=None,
+        intervention_applied=True,
+        rationale="always_analitico mode (baseline)",
+        decision_strategy="forced",
+    )
+
+    messages = [{"role": "user", "content": "hola"}]
+    modified = system.apply_intervention(messages, decision)
+
+    assert modified[0]["role"] == "system"
+    assert "step-by-step" in modified[0]["content"]

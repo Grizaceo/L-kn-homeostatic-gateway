@@ -78,6 +78,7 @@ class HomeostaticSystem:
     def __init__(self, config: HomeostaticConfig, engine_client):
         self.config = config
         self.engine_client = engine_client
+        self._chat_logprobs_supported: Optional[bool] = None
 
     def _latest_user_message(self, messages: List[Dict[str, str]]) -> str:
         """Return the latest user message content."""
@@ -146,9 +147,9 @@ class HomeostaticSystem:
 
     async def probe_entropy(self, messages: List[Dict[str, str]]) -> Optional[float]:
         """
-        Probe engine to estimate entropy of next token distribution.
+        Probe entropy via /v1/chat/completions logprobs.
 
-        Uses native /generate endpoint with logprobs.
+        This keeps the same chat template path as normal generation.
         """
         if not messages:
             logger.warning("probe_empty_messages")
@@ -156,6 +157,82 @@ class HomeostaticSystem:
 
         if self.engine_client is None:
             logger.warning("probe_missing_engine_client")
+            return None
+
+        # If we already detected that chat logprobs is unavailable, skip directly.
+        if self._chat_logprobs_supported is False:
+            return await self.probe_entropy_legacy(messages)
+
+        try:
+            response = await self.engine_client.chat_completions(
+                messages=messages,
+                stream=False,
+                max_tokens=1,
+                temperature=1.0,
+                logprobs=True,
+                top_logprobs=self.config.probe_top_k,
+            )
+
+            # OpenAI format: choices[0].logprobs.content[0].top_logprobs
+            choices = response.get("choices", [])
+            if not choices:
+                logger.warning("probe_no_choices")
+                return None
+
+            logprobs_data = choices[0].get("logprobs", {})
+            content_logprobs = logprobs_data.get("content", [])
+            if not content_logprobs:
+                self._chat_logprobs_supported = False
+                logger.warning("probe_no_content_logprobs_fallback_legacy")
+                return await self.probe_entropy_legacy(messages)
+
+            top_logprobs = content_logprobs[0].get("top_logprobs", [])
+            logprobs_list = [(entry["token"], entry["logprob"]) for entry in top_logprobs]
+            if not logprobs_list:
+                self._chat_logprobs_supported = False
+                logger.warning("probe_empty_top_logprobs_fallback_legacy")
+                return await self.probe_entropy_legacy(messages)
+
+            self._chat_logprobs_supported = True
+            entropy_norm = self.calculate_entropy(logprobs_list)
+            logger.info(
+                "probe_completed",
+                entropy_norm=round(entropy_norm, 3),
+                method="chat_completions",
+            )
+            return entropy_norm
+
+        except Exception as e:
+            from utils import classify_engine_error
+            import httpx
+
+            if isinstance(e, (KeyError, TypeError)):
+                self._chat_logprobs_supported = False
+                logger.warning("probe_logprobs_schema_unsupported_fallback_legacy", error=str(e))
+                return await self.probe_entropy_legacy(messages)
+
+            if isinstance(e, httpx.HTTPStatusError) and 400 <= e.response.status_code < 500:
+                self._chat_logprobs_supported = False
+                logger.warning(
+                    "probe_logprobs_http_unsupported_fallback_legacy",
+                    status_code=e.response.status_code,
+                )
+                return await self.probe_entropy_legacy(messages)
+
+            category, reason = classify_engine_error(e)
+            logger.error("probe_failed", failure_reason=reason, category=category, error=str(e))
+            return None
+
+    async def probe_entropy_legacy(self, messages: List[Dict[str, str]]) -> Optional[float]:
+        """
+        Legacy entropy probe via /generate and manual role template.
+        """
+        if not messages:
+            logger.warning("probe_legacy_empty_messages")
+            return None
+
+        if self.engine_client is None:
+            logger.warning("probe_legacy_missing_engine_client")
             return None
 
         try:
@@ -171,33 +248,34 @@ class HomeostaticSystem:
                     prompt_parts.append(f"Assistant: {content}")
 
             prompt = "\n".join(prompt_parts) + "\nAssistant:"
-
             sampling_params = {
                 "max_new_tokens": 1,
                 "temperature": 1.0,
                 "return_logprob": True,
                 "top_logprobs_num": self.config.probe_top_k,
             }
-
             response = await self.engine_client.generate(prompt, sampling_params)
-
             if "meta_info" in response and "output_top_logprobs" in response["meta_info"]:
                 top_logprobs = response["meta_info"]["output_top_logprobs"]
                 if top_logprobs:
                     first_token_logprobs = top_logprobs[0]
                     logprobs_list = [(token, lp) for token, lp in first_token_logprobs.items()]
                     entropy_norm = self.calculate_entropy(logprobs_list)
-                    logger.info("probe_completed", entropy_norm=round(entropy_norm, 3))
+                    logger.info(
+                        "probe_completed",
+                        entropy_norm=round(entropy_norm, 3),
+                        method="legacy_generate",
+                    )
                     return entropy_norm
 
-            logger.warning("probe_schema_mismatch", response_keys=list(response.keys()))
+            logger.warning("probe_legacy_schema_mismatch", response_keys=list(response.keys()))
             return None
 
         except Exception as e:
             from utils import classify_engine_error
 
             category, reason = classify_engine_error(e)
-            logger.error("probe_failed", failure_reason=reason, category=category, error=str(e))
+            logger.error("probe_legacy_failed", failure_reason=reason, category=category, error=str(e))
             return None
 
     async def decide_mode(self, messages: List[Dict[str, str]]) -> HomeostaticDecision:

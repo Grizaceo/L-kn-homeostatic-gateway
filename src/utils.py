@@ -78,13 +78,13 @@ class LatencyTracker:
     
     def start(self):
         """Start timing."""
-        self.start_time = time.time()
+        self.start_time = time.perf_counter()
     
     def elapsed_ms(self) -> float:
         """Get elapsed time in milliseconds."""
         if self.start_time is None:
             return 0.0
-        return (time.time() - self.start_time) * 1000
+        return (time.perf_counter() - self.start_time) * 1000
 
 
 def classify_engine_error(exception: Exception) -> tuple[str, str]:

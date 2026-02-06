@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     lkn_decision_strategy: str = "rules"  # "rules" or "entropy"
     lkn_max_tokens_fluido: int = 150
     lkn_analytic_system_prompt: str = "Think carefully, verify your assumptions, and reason step-by-step before answering."
-    lkn_mode: str = "homeostatic"  # "homeostatic" or "passthrough"
+    lkn_mode: str = "homeostatic"  # "homeostatic", "passthrough", or "always_analitico"
     
     circuit_breaker_threshold: int = 5
     circuit_breaker_timeout: int = 30
@@ -257,6 +257,16 @@ async def chat_completions(request: ChatCompletionRequest, raw_request: Request)
             # Apply intervention if needed
             if decision.intervention_applied:
                 messages = homeostatic_system.apply_intervention(messages, decision)
+        elif settings.lkn_mode == "always_analitico":
+            mode = "ANALITICO"
+            decision = HomeostaticDecision(
+                mode="ANALITICO",
+                entropy_norm=None,
+                intervention_applied=True,
+                rationale="always_analitico mode (baseline)",
+                decision_strategy="forced",
+            )
+            messages = homeostatic_system.apply_intervention(messages, decision)
 
         # Prepare kwargs for engine
         engine_kwargs = {}
